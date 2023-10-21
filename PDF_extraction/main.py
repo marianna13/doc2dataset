@@ -225,9 +225,6 @@ def pdf_extractor(
     output_folder: str = "dataset",
     input_format: str = "csv",
     file_col: str = "filename",
-    enable_wandb: bool = False,
-    wandb_project: str = "pdf_extraction",
-    interleaved: bool = False,
     distributor: str = "multiprocessing",
     processes_count: int = 1,
 ):
