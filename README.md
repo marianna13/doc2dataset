@@ -3,11 +3,11 @@
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/rom1504/python_template/blob/master/notebook/python_template_getting_started.ipynb)
 [![Try it on gitpod](https://img.shields.io/badge/try-on%20gitpod-brightgreen.svg)](https://gitpod.io/#https://github.com/rom1504/python_template)
 
-A nice template to start with
+Easily extract text (and images) from a bunch of pdf files (while preserving the original text formatting)
 
 ## Install
 
-pip install python_template
+pip install PDF_extraction
 
 ## Python examples
 
@@ -16,13 +16,25 @@ Checkout these examples to call this as a lib:
 
 ## API
 
-This module exposes a single function `hello_world` which takes the same arguments as the command line tool:
+This module exposes a single function `pdf_extractor` which takes the same arguments as the command line tool:
 
-* **message** the message to print. (*required*)
 
+* **file_list** file (csv, parquet, txt etc) containing paths of documents. (*required*)
+* **output_format**  Format of output dataset can be (default = "files")
+    - files, samples saved in subdirectory for each shard (useful for debugging)
+    - webdataset, samples saved in tars (useful for efficient loading)
+    - parquet, sampels saved in parquet (as bytes)
+* **output_folder**: Desired location of output dataset (default = "dataset")
+* **input_format**: Format of the input, can be (default = "csv")
+    - txt, text file with a url in each line
+    - csv, csv file with urls, (and captions + metadata)
+    - tsv, tsv - || -
+    - parquet, loads urls and metadata as parquet
+* **file_col**: Column in input (if has columns) that contains the filename (default = "filename")
+* **distributor** whether to use multiprocessing or pyspark (default = "multiporocessing")
+* **processes_count** number of parallel processes (default = 1)
 ## For development
 
-Either locally, or in [gitpod](https://gitpod.io/#https://github.com/rom1504/python_template) (do `export PIP_USER=false` there)
 
 Setup a virtualenv:
 
@@ -44,4 +56,3 @@ make test
 
 You can use `make black` to reformat the code
 
-`python -m pytest -x -s -v tests -k "dummy"` to run a specific test
