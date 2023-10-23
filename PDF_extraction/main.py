@@ -1,6 +1,6 @@
 """PDF exxtraction pipeline"""
 
-from typing import List, Dict, Generator
+from typing import List, Dict, Generator, Union, Tuple
 import fire
 
 import re
@@ -20,6 +20,7 @@ import math
 import os
 import uuid
 from timeit import default_timer as timer
+import json
 
 
 def get_font_size(style: str) -> float:
@@ -117,66 +118,98 @@ def process_page(page) -> str:
                 text = process_block(b, page)
                 extracted_data.append(text)
             except Exception as err:
-                logger.info(
-                    f"Couldn't process block #{i} from page #{page_number} with following coordinates: {b} \n got an error: {err}"
-                )
+   
                 continue
 
     except Exception as err:
-        logger.info(f"Couldn't process page #{page_number} \n got an error: {err}")
-
+        return "\n".join(extracted_data) # FIXME: this looks weird
+        
     return "\n".join(extracted_data)
 
 
-def process_doc(doc_path: str) -> List[str]:
+def process_doc(doc_path: Union[str, os.PathLike]) -> Tuple[List[str], str]:
     """Process one document"""
-    logger.info(f"Starting extraction of the doc: {doc_path}")
-    begin = timer()
-    doc = fitz.open(doc_path)
-    logger.info(f"Number of pages: {doc.page_count}")
+    
+    try:
+        with fsspec.open(doc_path, 'rb', timeout=1) as doc_file:
+            doc = fitz.open(stream=doc_file.read())
+    except Exception as err:
+        return None, type(err).__name__+' '+str(err)
+
     pages = []
     for page in doc.pages():
         processed_page = process_page(page)
+        if len(processed_page) == 0: # skip empty pages
+            continue
         pages.append(processed_page)
-    end = timer()
-    tot_time = end - begin
-    logger.info(f"Took {tot_time} seconds to parse")
-    return pages
+
+    if len(pages) > 0: # don't add empty docs
+        return pages, 'No error'
+    return None, 'Empty doc'
 
 
 def writer(data_generator: Generator, output_format: str, output_folder: str):
 
-    logger.info(f"Creating a directory to write output {output_folder}")
-
-    os.makedirs(output_folder, exist_ok=True)
+    
     if output_format == "txt":
         for data in data_generator:
-            doc_path = data["doc_path"]["filename"].replace("/", "_").replace(".pdf", ".txt")
+            begin_write = timer()
+            doc_path = data["doc_path"].replace("/", "_").replace(".pdf", ".txt")
+            error_dict = data.pop('error')
             txt_path = os.path.join(output_folder, doc_path)
             with open(txt_path, "w") as f:
                 for page in data["pages"]:
                     f.write(page + "\n")
+            end_write = timer()
+            with fsspec.open(path.replace('.txt', '')+ '_log.json', 'w') as f:
+                log_data = {
+                    'error_stats': error_dict,
+                    'total_processing_time': end_write - begin_write
+                }
+                json.dump(log_data, f)
 
     elif output_format == "parquet":
-        pandas_df = pd.DataFrame(data_generator, columns=["pages", "doc_path"])
+        begin_write = timer()
+        pandas_df = pd.DataFrame(data_generator, columns=["pages", "doc_path", "error"])
+        error_dict = pandas_df["error"].value_counts().to_dict()
+        pandas_df = pandas_df.drop('error', axis=1)
         path = output_folder + "/" + str(uuid.uuid4()) + ".parquet"
-        pandas_df.to_parquet(path, index=False)
+        pandas_df.dropna(axis=0).to_parquet(path, index=False)
+        end_write = timer()
+        with fsspec.open(path.replace('.parquet', '')+ '_log.json', 'w') as f:
+            log_data = {
+                'error_stats': error_dict,
+                'total_processing_time': end_write - begin_write
+            }
+            json.dump(log_data, f)
 
     elif output_format == "csv":
-        pandas_df = pd.DataFrame(data_generator, columns=["pages", "doc_path"])
+        begin_write = timer()
+        pandas_df = pd.DataFrame(data_generator, columns=["pages", "doc_path", "error"])
+        error_dict = pandas_df["error"].value_counts().to_dict()
+        pandas_df = pandas_df.drop('error', axis=1)
         path = output_folder + "/" + str(uuid.uuid4()) + ".csv"
-        pandas_df.to_csv(path, index=False)
+        pandas_df.dropna(axis=0).to_csv(path, index=False)
+        end_write = timer()
+        with fsspec.open(path.replace('.csv', '')+ '_log.json', 'w') as f:
+            log_data = {
+                'error_stats': error_dict,
+                'total_processing_time': end_write - begin_write
+            }
+            json.dump(log_data, f)
     else:
         ValueError(f"Unknown output format: {output_format}")
 
 
-def process_multipart(file_list: list, output_format: str, output_folder: str):
+def process_multipart(file_list: list, output_format: str, output_folder: str, file_col: str):
     """Process multiple documents"""
+
 
     def extract(file_list):
         for doc_path in file_list:
-            pages = process_doc(doc_path["filename"])
-            yield {"pages": pages, "doc_path": doc_path}
+            pages, err = process_doc(doc_path[file_col])
+            yield {"pages": pages, "doc_path": doc_path[file_col], 'error': err}
+
 
     writer(extract(file_list), output_format, output_folder)
 
@@ -193,14 +226,16 @@ def get_shard_indices(number_samples: int, number_shards: int) -> list:
 
 
 def get_file_shards(input_file, input_format, file_col, processes_count) -> Generator:
-    # fs, url_path = fsspec.core.url_to_fs(url_list)
+    """Split input file list into shards for every process"""
+    # FIXME: need to support a folder of files
+    # FIXME: Sharding is not efficent - need to shard not according ro number of processing but rather by some number of samples per shard
     with fsspec.open(input_file, mode="rb") as file:
         if input_format == "txt":
             df = csv_pq.read_csv(file, read_options=csv_pq.ReadOptions(column_names=[file_col]))
         elif input_format == "json":
             df = pa.Table.from_pandas(pd.read_json(file))
         elif input_format == "csv":
-            df = pa.Table.from_pandas(pd.read_csv(file))
+            df = pa.Table.from_pandas(pd.read_csv(file, sep='delimiter', header=None, names=['url']))
         elif input_format == "tsv":
             df = csv_pq.read_csv(file, parse_options=csv_pq.ParseOptions(delimiter="\t"))
         elif input_format == "parquet":
@@ -227,6 +262,7 @@ def pdf_extractor(
     file_col: str = "filename",
     distributor: str = "multiprocessing",
     processes_count: int = 1,
+    verbose: bool = True
 ):
     """
     Create datasets from pdf files
@@ -253,16 +289,22 @@ def pdf_extractor(
     interleaved: whether to include images, cretaes an interleaved version
     distributor: how to process documents (currently only supports multiprocessing)
     processes_count: number of parallel processes
-    number_sample_per_shard: number of documents per shard
+    verbose: whether to print addition output
     """
+
+    logger.info(f"Creating a directory to write output {output_folder}")
+
+    # FIXME: create the output folder with fsspec to support other filesystems
+    os.makedirs(output_folder, exist_ok=True)
 
     if distributor == "multiprocessing":
 
         shards = get_file_shards(file_list, input_format, file_col, processes_count)
 
         with Pool(processes_count) as process_pool:
-            process_pool.starmap(process_multipart, [(shard, output_format, output_folder) for shard in shards])
+            process_pool.starmap(process_multipart, [(shard, output_format, output_folder, file_col) for shard in shards])
 
+    # FIXME: support for pyspark
     else:
         raise ValueError(f"Unknown distributor: {distributor}")
 
