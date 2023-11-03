@@ -21,6 +21,10 @@ import os
 import uuid
 from timeit import default_timer as timer
 import json
+from pyspark import SparkContext
+from pyspark.sql import SparkSession
+from pyspark import SparkConf
+from pyspark.sql.types import StructType,StructField, StringType, IntegerType, ArrayType
 
 
 def get_font_size(style: str) -> float:
@@ -134,6 +138,7 @@ def process_doc(doc_path: Union[str, os.PathLike]) -> Tuple[List[str], str]:
         with fsspec.open(doc_path, 'rb', timeout=1) as doc_file:
             doc = fitz.open(stream=doc_file.read())
     except Exception as err:
+        print(type(err).__name__+' '+str(err))
         return None, type(err).__name__+' '+str(err)
 
     pages = []
@@ -200,18 +205,60 @@ def writer(data_generator: Generator, output_format: str, output_folder: str):
     else:
         ValueError(f"Unknown output format: {output_format}")
 
+def extract(file_list, file_col):
+    for doc_path in file_list:
+        pages, err = process_doc(doc_path[file_col])
+        yield {"pages": pages, "doc_path": doc_path[file_col], 'error': err}
+
+def local_session(num_cores=16, mem_gb=256):
+    """Build a local spark session"""
+    spark = (
+        SparkSession.builder.config("spark.driver.memory", str(mem_gb) + "G")
+        .master("local[" + str(num_cores) + "]")
+        .config("spark.hadoop.fs.s3a.aws.credentials.provider", "com.amazonaws.auth.InstanceProfileCredentialsProvider")
+        # .config("spark.hadoop.fs.s3a.aws.credentials.provider","org.apache.hadoop.fs.s3a.AnonymousAWSCredentialsProvider")
+        .config(
+            "spark.jars.packages", "org.apache.hadoop:hadoop-aws:3.3.1,org.apache.spark:spark-hadoop-cloud_2.13:3.3.1"
+        )
+        .appName("test")
+        .getOrCreate()
+    )
+
+    return spark
+
 
 def process_multipart(file_list: list, output_format: str, output_folder: str, file_col: str):
     """Process multiple documents"""
 
+    writer(extract(file_list, file_col), output_format, output_folder)
 
-    def extract(file_list):
-        for doc_path in file_list:
-            pages, err = process_doc(doc_path[file_col])
-            yield {"pages": pages, "doc_path": doc_path[file_col], 'error': err}
+def deduplicate_repartition_count(df, output_path, wat_count, spark, shuffle=False):
+    """Deduplicate and repartition"""
+    uniques = df.dropDuplicates(["uid"])
+    s = time.time()
+    if shuffle:
+        uniques = uniques.sort(rand())
+    repartitioned = uniques.repartition(max(256, wat_count // 500))
+    repartitioned.write.mode("overwrite").parquet(output_path)
+    e = time.time()
+    logger.info(f"Took {e - s} seconds")
+    logger.info("Computing size")
+    df = spark.read.parquet(output_path)
+    logger.info(f"Size: {df.count()}")
 
-
-    writer(extract(file_list), output_format, output_folder)
+def process_spark(file_list, processes_count, output_folder, file_col):
+    schema = StructType([ \
+        StructField("pages",ArrayType(StringType()),True), \
+        StructField("doc_path",StringType(),True), \
+        StructField("error",StringType(),True), \
+    ])
+    spark = local_session()
+    sc = SparkContext.getOrCreate()
+    wat_rdd = sc.parallelize(file_list, processes_count)
+    output = wat_rdd.mapPartitions(lambda x: extract(list(x)[0], file_col))
+    df = output.toDF(schema=schema)
+    df.write.mode('overwrite').parquet(output_folder)
+    # deduplicate_repartition_count(df, output_path + "/merged", wat_count, spark, shuffle)
 
 
 def get_shard(df, shard_start, shard_end, file_col) -> list:
@@ -225,7 +272,7 @@ def get_shard_indices(number_samples: int, number_shards: int) -> list:
     return [(i * k + min(i, m), (i + 1) * k + min(i + 1, m)) for i in range(number_shards)]
 
 
-def get_file_shards(input_file, input_format, file_col, processes_count) -> Generator:
+def get_file_shards(input_file, input_format, file_col, processes_count, number_samples=None) -> Generator:
     """Split input file list into shards for every process"""
     # FIXME: need to support a folder of files
     # FIXME: Sharding is not efficent - need to shard not according ro number of processing but rather by some number of samples per shard
@@ -243,7 +290,11 @@ def get_file_shards(input_file, input_format, file_col, processes_count) -> Gene
         else:
             raise ValueError(f"Unknown input format {input_format}")
 
-    number_samples = df.num_rows
+    num_rows = df.num_rows
+    number_samples = number_samples if number_samples else num_rows
+  
+    # df = df.take(list(np.random.randint(0, num_rows-1, number_samples))) # shuffle
+    
 
     number_sample_per_shards = math.ceil(df.num_rows / processes_count)
 
@@ -262,7 +313,8 @@ def pdf_extractor(
     file_col: str = "filename",
     distributor: str = "multiprocessing",
     processes_count: int = 1,
-    verbose: bool = True
+    verbose: bool = True,
+    number_samples: int = None,
 ):
     """
     Create datasets from pdf files
@@ -289,7 +341,7 @@ def pdf_extractor(
     interleaved: whether to include images, cretaes an interleaved version
     distributor: how to process documents (currently only supports multiprocessing)
     processes_count: number of parallel processes
-    verbose: whether to print addition output
+    number_samples: number of samples
     """
 
     logger.info(f"Creating a directory to write output {output_folder}")
@@ -297,14 +349,15 @@ def pdf_extractor(
     # FIXME: create the output folder with fsspec to support other filesystems
     os.makedirs(output_folder, exist_ok=True)
 
+    shards = get_file_shards(file_list, input_format, file_col, processes_count, number_samples)
+
     if distributor == "multiprocessing":
-
-        shards = get_file_shards(file_list, input_format, file_col, processes_count)
-
         with Pool(processes_count) as process_pool:
             process_pool.starmap(process_multipart, [(shard, output_format, output_folder, file_col) for shard in shards])
 
     # FIXME: support for pyspark
+    elif distributor == "pyspark":
+        process_spark(shards, processes_count, output_folder, file_col)
     else:
         raise ValueError(f"Unknown distributor: {distributor}")
 
