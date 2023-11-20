@@ -26,6 +26,11 @@ from pyspark.sql import SparkSession
 from pyspark import SparkConf
 from pyspark.sql.types import StructType,StructField, StringType, IntegerType, ArrayType
 
+try:
+    from huggingface_hub import HfFileSystem, create_repo
+except:
+    logger.warning("Plaase install HuggingFace hub with `pip install huggingface-hub to write to HF!")
+
 
 def get_font_size(style: str) -> float:
     """get font size from the style tag"""
@@ -112,7 +117,6 @@ def process_page(page) -> str:
         blocks = page.get_text("blocks", sort=True)
 
         text_blocks = [b[:4] for b in blocks if b[-1] == 0]
-        # print(np.max(np.array(text_blocks)[:, 0]), np.max(np.array(text_blocks)[:, 1]))
         image_blocks = [b[:4] for b in blocks if b[-1] == 1]
         merged_blocks = merge_coords(text_blocks)
         merged_blocks.extend(image_blocks)
@@ -134,12 +138,11 @@ def process_page(page) -> str:
 def process_doc(doc_path: Union[str, os.PathLike]) -> Tuple[List[str], str]:
     """Process one document"""
     
-    # try:
-    with fsspec.open(doc_path, 'rb', timeout=1) as doc_file:
-        doc = fitz.open(stream=doc_file.read())
-    # except Exception as err:
-    #     print(err)
-    #     return None, type(err)
+    try:
+        with fsspec.open(doc_path, 'rb', timeout=1) as doc_file:
+            doc = fitz.open(stream=doc_file.read())
+    except Exception as err:
+        return None, type(err)
 
     pages = []
     for page in doc.pages():
@@ -153,7 +156,18 @@ def process_doc(doc_path: Union[str, os.PathLike]) -> Tuple[List[str], str]:
     return None, 'Empty doc'
 
 
-def writer(data_generator: Generator, output_format: str, output_folder: str, drop_w_eror: bool):
+def writer(
+        data_generator: Generator, 
+        output_format: str, 
+        output_folder: str, 
+        drop_w_eror: bool, 
+        fs
+    ):
+
+    sep = {
+        "txt": " ",
+        "csv": ","
+    }
 
     if output_format == "parquet":
         begin_write = timer()
@@ -163,26 +177,27 @@ def writer(data_generator: Generator, output_format: str, output_folder: str, dr
         path = output_folder + "/" + str(uuid.uuid4()) + ".parquet"
         if drop_w_eror:
             pandas_df = pandas_df[pandas_df.error == 'No error']
-        pandas_df.dropna(axis=0).to_parquet(path, index=False)
+        with fs.open(path, mode="wb") as o_file:
+            pandas_df.dropna(axis=0).to_parquet(o_file, index=False)
         end_write = timer()
-        with fsspec.open(path.replace('.parquet', '')+ '_log.json', 'w') as f:
+        with fs.open(path.replace('.parquet', '')+ '_log.json', 'w') as f:
             log_data = {
                 'error_stats': error_dict,
                 'total_processing_time': end_write - begin_write
             }
             json.dump(log_data, f)
 
-    elif output_format in ["txt", 'txt']:
+    elif output_format in ["csv", 'txt']:
         begin_write = timer()
         pandas_df = pd.DataFrame(data_generator, columns=["pages", "doc_path", "error"])
         error_dict = pandas_df["error"].value_counts().to_dict()
         pandas_df = pandas_df.drop('error', axis=1)
-        path = output_folder + "/" + str(uuid.uuid4()) + ".txt"
+        path = output_folder + "/" + str(uuid.uuid4()) + f".{output_format}"
         if drop_w_eror:
             pandas_df = pandas_df[pandas_df.error == 'No error']
-        pandas_df.dropna(axis=0).to_csv(path, index=False, sep=" ")
+        pandas_df.dropna(axis=0).to_csv(path, index=False, sep=sep[output_format])
         end_write = timer()
-        with fsspec.open(path.replace('.csv', '')+ '_log.json', 'w') as f:
+        with fsspec.open(path.replace(f".{output_format}", '')+ '_log.json', 'w') as f:
             log_data = {
                 'error_stats': error_dict,
                 'total_processing_time': end_write - begin_write
@@ -216,12 +231,19 @@ def local_session(num_cores=16, mem_gb=256):
     return spark
 
 
-def process_multipart(file_list: list, output_format: str, output_folder: str, file_col: str, drop_w_eror: bool):
+def process_multipart(
+        file_list: list, 
+        output_format: str, 
+        output_folder: str, 
+        file_col: str, 
+        drop_w_eror: bool, 
+        fs
+    ):
     """Process multiple documents"""
 
-    writer(extract(file_list, file_col), output_format, output_folder)
+    writer(extract(file_list, file_col), output_format, output_folder, drop_w_eror, fs)
 
-def deduplicate_repartition_count(df, output_path, wat_count, spark, shuffle=False):
+def deduplicate_repartition_count(df, output_path, wat_count, spark, shuffle=True):
     """Deduplicate and repartition"""
     uniques = df.dropDuplicates(["uid"])
     s = time.time()
@@ -240,7 +262,9 @@ def process_spark(
         processes_count, 
         output_folder, 
         file_col,
-        mem_gb
+        mem_gb,
+        drop_w_eror,
+        fs
     ):
     schema = StructType([ \
         StructField("pages",ArrayType(StringType()),True), \
@@ -252,7 +276,11 @@ def process_spark(
     wat_rdd = sc.parallelize(file_list, processes_count)
     output = wat_rdd.mapPartitions(lambda x: extract(list(x)[0], file_col))
     df = output.toDF(schema=schema)
-    df.write.mode('overwrite').parquet(output_folder)
+    if drop_w_eror:
+        df = df.filter(df.error == "No error")
+    
+    with fs.open(output_folder, mode='wb') as o_file:
+        df.write.mode('overwrite').parquet(o_file)
     # deduplicate_repartition_count(df, output_path + "/merged", wat_count, spark, shuffle)
 
 
@@ -311,7 +339,8 @@ def pdf_extractor(
     verbose: bool = True,
     number_samples: int = None,
     mem_gb: int=256,
-    drop_w_eror: bool=False
+    drop_w_eror: bool=False,
+    filesystem="file"
 ):
     """
     Create datasets from pdf files
@@ -341,22 +370,27 @@ def pdf_extractor(
     number_samples: number of samples
     mem_gb: memory in GB for the spark session to use
     drop_w_eror: drop row with error
+    filesystem: file sytem to write output files to
     """
 
     logger.info(f"Creating a directory to write output {output_folder}")
 
-    # FIXME: create the output folder with fsspec to support other filesystems
-    os.makedirs(output_folder, exist_ok=True)
+
+    fs = fsspec.filesystem(filesystem)
+    try:
+        fs.makedirs(output_folder, exist_ok=True)
+    except:
+        logger.warning(f"Couldn't create {output_folder}")
 
     shards = get_file_shards(file_list, input_format, file_col, processes_count, number_samples)
 
     if distributor == "multiprocessing":
         with Pool(processes_count) as process_pool:
-            process_pool.starmap(process_multipart, [(shard, output_format, output_folder, file_col, drop_w_eror) for shard in shards])
+            process_pool.starmap(process_multipart, [(shard, output_format, output_folder, file_col, drop_w_eror, fs) for shard in shards])
 
     # FIXME: support for pyspark
     elif distributor == "pyspark":
-        process_spark(shards, processes_count, output_folder, file_col, mem_gb, drop_w_eror)
+        process_spark(shards, processes_count, output_folder, file_col, mem_gb, drop_w_eror, fs)
     else:
         raise ValueError(f"Unknown distributor: {distributor}")
 
