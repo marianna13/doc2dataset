@@ -56,14 +56,14 @@ def coords2html(coords, page):
     """
     Return HTML version for the page rectangle of given the coordinates
     """
+    prev_mediabox = page.mediabox
     page.set_cropbox(fitz.Rect(coords))
     html = BeautifulSoup(page.get_text("html"), "html.parser")
     if len(html.find_all("img")) > 0:
-        return f"<fig rect={coords}></fig>"
+        return f"<fig rect=\"{tuple(coords)}\"></fig>"
     html = " ".join([process_p(p) for p in html.find_all("span")])
-
     html = html.replace(' id="page0"', "")  # remove id which comes from pymupdf
-    page.set_mediabox(page.mediabox)  # go back to the original media box
+    page.set_mediabox(prev_mediabox)  # go back to the original media box
     return html
 
 
@@ -134,12 +134,12 @@ def process_page(page) -> str:
 def process_doc(doc_path: Union[str, os.PathLike]) -> Tuple[List[str], str]:
     """Process one document"""
     
-    try:
-        with fsspec.open(doc_path, 'rb', timeout=1) as doc_file:
-            doc = fitz.open(stream=doc_file.read())
-    except Exception as err:
-        print(type(err).__name__+' '+str(err))
-        return None, type(err).__name__+' '+str(err)
+    # try:
+    with fsspec.open(doc_path, 'rb', timeout=1) as doc_file:
+        doc = fitz.open(stream=doc_file.read())
+    # except Exception as err:
+    #     print(err)
+    #     return None, type(err)
 
     pages = []
     for page in doc.pages():
@@ -153,32 +153,16 @@ def process_doc(doc_path: Union[str, os.PathLike]) -> Tuple[List[str], str]:
     return None, 'Empty doc'
 
 
-def writer(data_generator: Generator, output_format: str, output_folder: str):
+def writer(data_generator: Generator, output_format: str, output_folder: str, drop_w_eror: bool):
 
-    
-    if output_format == "txt":
-        for data in data_generator:
-            begin_write = timer()
-            doc_path = data["doc_path"].replace("/", "_").replace(".pdf", ".txt")
-            error_dict = data.pop('error')
-            txt_path = os.path.join(output_folder, doc_path)
-            with open(txt_path, "w") as f:
-                for page in data["pages"]:
-                    f.write(page + "\n")
-            end_write = timer()
-            with fsspec.open(path.replace('.txt', '')+ '_log.json', 'w') as f:
-                log_data = {
-                    'error_stats': error_dict,
-                    'total_processing_time': end_write - begin_write
-                }
-                json.dump(log_data, f)
-
-    elif output_format == "parquet":
+    if output_format == "parquet":
         begin_write = timer()
         pandas_df = pd.DataFrame(data_generator, columns=["pages", "doc_path", "error"])
         error_dict = pandas_df["error"].value_counts().to_dict()
         pandas_df = pandas_df.drop('error', axis=1)
         path = output_folder + "/" + str(uuid.uuid4()) + ".parquet"
+        if drop_w_eror:
+            pandas_df = pandas_df[pandas_df.error == 'No error']
         pandas_df.dropna(axis=0).to_parquet(path, index=False)
         end_write = timer()
         with fsspec.open(path.replace('.parquet', '')+ '_log.json', 'w') as f:
@@ -188,13 +172,15 @@ def writer(data_generator: Generator, output_format: str, output_folder: str):
             }
             json.dump(log_data, f)
 
-    elif output_format == "csv":
+    elif output_format in ["txt", 'txt']:
         begin_write = timer()
         pandas_df = pd.DataFrame(data_generator, columns=["pages", "doc_path", "error"])
         error_dict = pandas_df["error"].value_counts().to_dict()
         pandas_df = pandas_df.drop('error', axis=1)
-        path = output_folder + "/" + str(uuid.uuid4()) + ".csv"
-        pandas_df.dropna(axis=0).to_csv(path, index=False)
+        path = output_folder + "/" + str(uuid.uuid4()) + ".txt"
+        if drop_w_eror:
+            pandas_df = pandas_df[pandas_df.error == 'No error']
+        pandas_df.dropna(axis=0).to_csv(path, index=False, sep=" ")
         end_write = timer()
         with fsspec.open(path.replace('.csv', '')+ '_log.json', 'w') as f:
             log_data = {
@@ -207,7 +193,10 @@ def writer(data_generator: Generator, output_format: str, output_folder: str):
 
 def extract(file_list, file_col):
     for doc_path in file_list:
-        pages, err = process_doc(doc_path[file_col])
+        try:
+            pages, err = process_doc(doc_path[file_col])
+        except Exception as err:
+            continue
         yield {"pages": pages, "doc_path": doc_path[file_col], 'error': err}
 
 def local_session(num_cores=16, mem_gb=256):
@@ -227,7 +216,7 @@ def local_session(num_cores=16, mem_gb=256):
     return spark
 
 
-def process_multipart(file_list: list, output_format: str, output_folder: str, file_col: str):
+def process_multipart(file_list: list, output_format: str, output_folder: str, file_col: str, drop_w_eror: bool):
     """Process multiple documents"""
 
     writer(extract(file_list, file_col), output_format, output_folder)
@@ -246,13 +235,19 @@ def deduplicate_repartition_count(df, output_path, wat_count, spark, shuffle=Fal
     df = spark.read.parquet(output_path)
     logger.info(f"Size: {df.count()}")
 
-def process_spark(file_list, processes_count, output_folder, file_col):
+def process_spark(
+        file_list, 
+        processes_count, 
+        output_folder, 
+        file_col,
+        mem_gb
+    ):
     schema = StructType([ \
         StructField("pages",ArrayType(StringType()),True), \
         StructField("doc_path",StringType(),True), \
         StructField("error",StringType(),True), \
     ])
-    spark = local_session()
+    spark = local_session(num_cores=processes_count, mem_gb=mem_gb)
     sc = SparkContext.getOrCreate()
     wat_rdd = sc.parallelize(file_list, processes_count)
     output = wat_rdd.mapPartitions(lambda x: extract(list(x)[0], file_col))
@@ -315,6 +310,8 @@ def pdf_extractor(
     processes_count: int = 1,
     verbose: bool = True,
     number_samples: int = None,
+    mem_gb: int=256,
+    drop_w_eror: bool=False
 ):
     """
     Create datasets from pdf files
@@ -342,6 +339,8 @@ def pdf_extractor(
     distributor: how to process documents (currently only supports multiprocessing)
     processes_count: number of parallel processes
     number_samples: number of samples
+    mem_gb: memory in GB for the spark session to use
+    drop_w_eror: drop row with error
     """
 
     logger.info(f"Creating a directory to write output {output_folder}")
@@ -353,11 +352,11 @@ def pdf_extractor(
 
     if distributor == "multiprocessing":
         with Pool(processes_count) as process_pool:
-            process_pool.starmap(process_multipart, [(shard, output_format, output_folder, file_col) for shard in shards])
+            process_pool.starmap(process_multipart, [(shard, output_format, output_folder, file_col, drop_w_eror) for shard in shards])
 
     # FIXME: support for pyspark
     elif distributor == "pyspark":
-        process_spark(shards, processes_count, output_folder, file_col)
+        process_spark(shards, processes_count, output_folder, file_col, mem_gb, drop_w_eror)
     else:
         raise ValueError(f"Unknown distributor: {distributor}")
 
