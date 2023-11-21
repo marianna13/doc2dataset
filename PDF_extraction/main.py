@@ -29,11 +29,11 @@ from pyspark.sql.types import StructType,StructField, StringType, IntegerType, A
 try:
     from huggingface_hub import HfFileSystem, create_repo
 except:
-    logger.warning("Plaase install HuggingFace hub with `pip install huggingface-hub to write to HF!")
-
+    logger.warning("Plaase install HuggingFace hub with `pip install huggingface-hub` to write to HF!")
+import sys
 
 def get_font_size(style: str) -> float:
-    """get font size from the style tag"""
+    """get font size from thsource e style tag"""
 
     style_dict = {s.split(":")[0]: s.split(":")[1].replace("pt", "") for s in style.split(";")}
 
@@ -230,6 +230,54 @@ def local_session(num_cores=16, mem_gb=256):
 
     return spark
 
+def aws_ec2_s3_spark_session(master, num_cores=128, mem_gb=256):
+    """Build a spark session on AWS EC2"""
+    os.environ["PYSPARK_PYTHON"] = sys.executable
+    os.environ["PYSPARK_DRIVER_PYTHON"] = sys.executable
+    main_memory = str(int(mem_gb * 0.9)) + "g"
+    memory_overhead = str(mem_gb - int(mem_gb * 0.9)) + "g"
+    spark = (
+        SparkSession.builder.config("spark.submit.deployMode", "client")
+        .config("spark.driver.cores", "20")
+        .config("spark.driver.memory", "50g")
+        .config("spark.driver.maxResultSize", "10g")
+        .config("spark.executor.memory", main_memory)
+        .config("spark.executor.cores", str(num_cores))  # this can be set to the number of cores of the machine
+        .config("spark.task.cpus", "1")
+        .config("spark.executor.memoryOverhead", memory_overhead)
+        .config("spark.task.maxFailures", "10")
+        .config(
+            "spark.jars.packages", "org.apache.hadoop:hadoop-aws:3.3.1,org.apache.spark:spark-hadoop-cloud_2.13:3.3.1"
+        )
+        # change to the appropriate auth method, see https://hadoop.apache.org/docs/stable/hadoop-aws/tools/hadoop-aws/index.html
+        # .config("spark.hadoop.fs.s3a.aws.credentials.provider", "com.amazonaws.auth.InstanceProfileCredentialsProvider")
+        # ton of options to try and make s3a run faster
+        .config("spark.hadoop.fs.s3a.threads.max", "512")
+        .config("spark.hadoop.fs.s3a.connection.maximum", "2048")
+        .config("spark.hadoop.fs.s3a.fast.upload", "true")
+        .config("spark.sql.shuffle.partitions", "4000")
+        .config("spark.hadoop.fs.s3a.directory.marker.retention", "keep")
+        .config("spark.hadoop.fs.s3a.max.total.tasks", "512")
+        .config("spark.hadoop.fs.s3a.multipart.threshold", "5M")
+        .config("spark.hadoop.fs.s3a.multipart.size", "5M")
+        .config("spark.hadoop.fs.s3a.fast.upload.active.blocks", "512")
+        .config("spark.hadoop.fs.s3a.connection.establish.timeout", "5000")
+        .config("spark.hadoop.fs.s3a.connection.timeout", "600000")
+        .config("spark.hadoop.fs.s3a.readahead.range", "2M")
+        .config("spark.hadoop.fs.s3a.socket.recv.buffer", "65536")
+        .config("spark.hadoop.fs.s3a.socket.send.buffer", "65536")
+        .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
+        .config("spark.hadoop.fs.s3a.experimental.input.fadvise", "random")
+        .config("spark.hadoop.fs.s3a.block.size", "2M")
+        .config("spark.hadoop.fs.s3a.fast.buffer.size", "100M")
+        .config("spark.hadoop.fs.s3a.fast.upload.buffer", "array")
+        .config("spark.hadoop.fs.s3a.bucket.all.committer.magic.enabled", "true")
+        .master(master)  # this should be set to the spark master url
+        .appName("cc2dataset")
+        .getOrCreate()
+    )
+    return spark
+
 
 def process_multipart(
         file_list: list, 
@@ -264,23 +312,30 @@ def process_spark(
         file_col,
         mem_gb,
         drop_w_eror,
-        fs
+        fs,
+        local,
+        master
     ):
     schema = StructType([ \
         StructField("pages",ArrayType(StringType()),True), \
         StructField("doc_path",StringType(),True), \
         StructField("error",StringType(),True), \
     ])
-    spark = local_session(num_cores=processes_count, mem_gb=mem_gb)
+
+    if local:
+        spark = local_session(num_cores=processes_count, mem_gb=mem_gb)
+    else:
+        spark = aws_ec2_s3_spark_session(master=master, num_cores=processes_count, mem_gb=mem_gb)
     sc = SparkContext.getOrCreate()
     wat_rdd = sc.parallelize(file_list, processes_count)
     output = wat_rdd.mapPartitions(lambda x: extract(list(x)[0], file_col))
     df = output.toDF(schema=schema)
     if drop_w_eror:
         df = df.filter(df.error == "No error")
+    df.write.mode('overwrite').parquet(output_folder)
     
-    with fs.open(output_folder, mode='wb') as o_file:
-        df.write.mode('overwrite').parquet(o_file)
+    # with fs.open(output_folder, mode='ab') as o_file:
+    #     df.write.mode('overwrite').parquet(o_file)
     # deduplicate_repartition_count(df, output_path + "/merged", wat_count, spark, shuffle)
 
 
@@ -340,7 +395,8 @@ def pdf_extractor(
     number_samples: int = None,
     mem_gb: int=256,
     drop_w_eror: bool=False,
-    filesystem="file"
+    filesystem="file",
+    master="local"
 ):
     """
     Create datasets from pdf files
@@ -390,7 +446,7 @@ def pdf_extractor(
 
     # FIXME: support for pyspark
     elif distributor == "pyspark":
-        process_spark(shards, processes_count, output_folder, file_col, mem_gb, drop_w_eror, fs)
+        process_spark(shards, processes_count, output_folder, file_col, mem_gb, drop_w_eror, fs, filesystem != 's3', master)
     else:
         raise ValueError(f"Unknown distributor: {distributor}")
 
