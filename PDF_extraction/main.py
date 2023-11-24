@@ -57,26 +57,28 @@ def process_p(p) -> str:
     return p
 
 
-def coords2html(coords, page):
+def coords2html(coords, page, get_images):
     """
     Return HTML version for the page rectangle of given the coordinates
     """
     prev_mediabox = page.mediabox
     page.set_cropbox(fitz.Rect(coords))
     html = BeautifulSoup(page.get_text("html"), "html.parser")
-    if len(html.find_all("img")) > 0:
-        return f"<fig rect=\"{tuple(coords)}\"></fig>"
+    if get_images:
+        if len(html.find_all("img")) > 0:
+            return "\n".join([str(im) for im in html.find_all('img')])
+            # return f"<fig rect=\"{tuple(coords)}\"></fig>"
     html = " ".join([process_p(p) for p in html.find_all("span")])
     html = html.replace(' id="page0"', "")  # remove id which comes from pymupdf
     page.set_mediabox(prev_mediabox)  # go back to the original media box
     return html
 
 
-def process_block(block, page):
+def process_block(block, page, get_images):
     """
     Return extracted version of extracted text
     """
-    html = coords2html(block, page)
+    html = coords2html(block, page, get_images)
     text = re.sub(r"<span>|</span>", "", html)
     return text
 
@@ -106,7 +108,7 @@ def merge_boxes(boxes_list: list) -> list:
     return [np.min(boxes[:, 0]), np.min(boxes[:, 1]), np.max(boxes[:, 2]), np.max(boxes[:, 3])]
 
 
-def process_page(page) -> str:
+def process_page(page, get_images) -> str:
     """
     Return text version of a page
     """
@@ -116,14 +118,14 @@ def process_page(page) -> str:
 
         blocks = page.get_text("blocks", sort=True)
 
-        text_blocks = [b[:4] for b in blocks if b[-1] == 0]
-        image_blocks = [b[:4] for b in blocks if b[-1] == 1]
-        merged_blocks = merge_coords(text_blocks)
-        merged_blocks.extend(image_blocks)
+        # text_blocks = [b[:4] for b in blocks if b[-1] == 0]
+        # image_blocks = [b[:4] for b in blocks if b[-1] == 1]
+        merged_blocks = merge_coords([b[:4] for b in blocks])
+        # merged_blocks.extend(image_blocks)
 
         for i, b in enumerate(merged_blocks):
             try:
-                text = process_block(b, page)
+                text = process_block(b, page, get_images)
                 extracted_data.append(text)
             except Exception as err:
    
@@ -135,7 +137,41 @@ def process_page(page) -> str:
     return "\n".join(extracted_data)
 
 
-def process_doc(doc_path: Union[str, os.PathLike]) -> Tuple[List[str], str]:
+def wds_writer(output_dir, maxcount):
+    with wds.ShardWriter(output_dir + "/%09d.tar", maxcount=maxcount) as sink:
+        for idx in range(len(doc_shards)):
+            image_tar = tarfile.open(image_shards[idx])
+
+            # Open the ZIP archive and extract the JSON file
+            with zipfile.ZipFile(doc_shards[idx], "r") as zip_file:
+                # Assumes the JSON file is the first file in the archive
+                json_filename = zip_file.namelist()[0]
+                with zip_file.open(json_filename, "r") as json_file:
+                    for sample_data in json_file:
+                        # get image names from json
+                        sample_data = json.loads(sample_data)
+                        image_info = sample_data["image_info"]
+                        image_names = [image["image_name"] for image in image_info]
+
+                        # Add each image to the tar file
+                        for img_idx, image_name in enumerate(image_names):
+                            image = image_tar.extractfile(
+                                f"{image_tar.getnames()[0]}/{image_name}"
+                            )
+
+                            # convert to base64
+                            image_bytes = image.read()
+                            image_base64 = base64.b64encode(image_bytes).decode("utf-8")
+                            sample_data["image_info"][img_idx][
+                                "image_base64"
+                            ] = image_base64
+
+                        key_str = uuid.uuid4().hex
+                        sink.write({"__key__": key_str, "json": sample_data})
+
+            image_tar.close()
+
+def process_doc(doc_path: Union[str, os.PathLike], get_images: bool) -> Tuple[List[str], str]:
     """Process one document"""
     
     try:
@@ -146,7 +182,12 @@ def process_doc(doc_path: Union[str, os.PathLike]) -> Tuple[List[str], str]:
 
     pages = []
     for page in doc.pages():
-        processed_page = process_page(page)
+        # processed_page = process_page(page, get_images)
+        processed_page = page.get_text('xhtml')
+        processed_page = processed_page.replace(' id="page0"', "")
+        processed_page = re.sub(r"(?i)<(?!img|/img).*?>", "\n", processed_page)
+        processed_page = re.sub(r'(\s?Page \d{1,3})', "", processed_page) # remove page numbers
+        processed_page = re.sub(r"\(pp\.\s+\d+(?:-\d+)?\)|\b\d+(?:-\d+)?(?=(?:\s*,\s*\d+(?:-\d+)?)*\.)", "", processed_page)
         if len(processed_page) == 0: # skip empty pages
             continue
         pages.append(processed_page)
@@ -206,10 +247,10 @@ def writer(
     else:
         ValueError(f"Unknown output format: {output_format}")
 
-def extract(file_list, file_col):
+def extract(file_list, file_col, get_images):
     for doc_path in file_list:
         try:
-            pages, err = process_doc(doc_path[file_col])
+            pages, err = process_doc(doc_path[file_col], get_images)
         except Exception as err:
             continue
         yield {"pages": pages, "doc_path": doc_path[file_col], 'error': err}
@@ -285,11 +326,12 @@ def process_multipart(
         output_folder: str, 
         file_col: str, 
         drop_w_eror: bool, 
-        fs
+        fs,
+        get_images: bool
     ):
     """Process multiple documents"""
 
-    writer(extract(file_list, file_col), output_format, output_folder, drop_w_eror, fs)
+    writer(extract(file_list, file_col, get_images), output_format, output_folder, drop_w_eror, fs)
 
 def deduplicate_repartition_count(df, output_path, wat_count, spark, shuffle=True):
     """Deduplicate and repartition"""
@@ -314,7 +356,8 @@ def process_spark(
         drop_w_eror,
         fs,
         local,
-        master
+        master,
+        get_images
     ):
     schema = StructType([ \
         StructField("pages",ArrayType(StringType()),True), \
@@ -328,7 +371,7 @@ def process_spark(
         spark = aws_ec2_s3_spark_session(master=master, num_cores=processes_count, mem_gb=mem_gb)
     sc = SparkContext.getOrCreate()
     wat_rdd = sc.parallelize(file_list, processes_count)
-    output = wat_rdd.mapPartitions(lambda x: extract(list(x)[0], file_col))
+    output = wat_rdd.mapPartitions(lambda x: extract(list(x)[0], file_col, get_images))
     df = output.toDF(schema=schema)
     if drop_w_eror:
         df = df.filter(df.error == "No error")
@@ -396,7 +439,8 @@ def pdf_extractor(
     mem_gb: int=256,
     drop_w_eror: bool=False,
     filesystem="file",
-    master="local"
+    master="local",
+    get_images=False
 ):
     """
     Create datasets from pdf files
@@ -427,6 +471,7 @@ def pdf_extractor(
     mem_gb: memory in GB for the spark session to use
     drop_w_eror: drop row with error
     filesystem: file sytem to write output files to
+    get_images: whether to extract images as well
     """
 
     logger.info(f"Creating a directory to write output {output_folder}")
@@ -442,11 +487,11 @@ def pdf_extractor(
 
     if distributor == "multiprocessing":
         with Pool(processes_count) as process_pool:
-            process_pool.starmap(process_multipart, [(shard, output_format, output_folder, file_col, drop_w_eror, fs) for shard in shards])
+            process_pool.starmap(process_multipart, [(shard, output_format, output_folder, file_col, drop_w_eror, fs, get_images) for shard in shards])
 
     # FIXME: support for pyspark
     elif distributor == "pyspark":
-        process_spark(shards, processes_count, output_folder, file_col, mem_gb, drop_w_eror, fs, filesystem != 's3', master)
+        process_spark(shards, processes_count, output_folder, file_col, mem_gb, drop_w_eror, fs, filesystem != 's3', master, get_images)
     else:
         raise ValueError(f"Unknown distributor: {distributor}")
 
