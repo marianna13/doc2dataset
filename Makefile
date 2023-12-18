@@ -6,9 +6,9 @@ install-dev: ## [Local development] Install test requirements
 	python -m pip install -r requirements-test.txt
 
 lint: ## [Local development] Run mypy, pylint and black
-	python -m mypy PDF_extraction
-	python -m pylint PDF_extraction
-	python -m black --check -l 120 PDF_extraction
+	python -m mypy doc2dataset
+	python -m pylint doc2dataset
+	python -m black --check -l 120 doc2dataset
 
 black: ## [Local development] Auto-format python code using black
 	python -m black -l 120 .
@@ -16,7 +16,7 @@ black: ## [Local development] Auto-format python code using black
 build-pex:
 	python3 -m venv .pexing
 	. .pexing/bin/activate && python -m pip install -U pip && python -m pip install pex
-	. .pexing/bin/activate && python -m pex setuptools . -o PDF_extraction.pex -v
+	. .pexing/bin/activate && python -m pex setuptools . -o doc2dataset.pex -v
 	rm -rf .pexing
 
 test: ## [Local development] Run unit tests

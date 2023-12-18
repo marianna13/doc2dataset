@@ -1,6 +1,20 @@
 from doc2dataset.main import download
 import time
 
+from pyspark.sql import SparkSession  # pylint: disable=import-outside-toplevel
+
+
+def local_session(num_cores=16, mem_gb=128):
+    """Build a local spark session"""
+    spark = (
+        SparkSession.builder.config("spark.driver.memory", str(mem_gb) + "G")
+        .master("local[" + str(num_cores) + "]")
+        .appName("sparky")
+        .getOrCreate()
+    )
+
+    return spark
+
 
 if __name__ == "__main__":
     sample_urls = [
@@ -22,6 +36,8 @@ if __name__ == "__main__":
     output_folder = f"test_result"
     input_format = "txt"
 
+    spark = local_session(processes_count, 256)
+
     s = time.time()
 
     download(
@@ -32,7 +48,7 @@ if __name__ == "__main__":
         thread_count=32,
         enable_wandb=False,
         processes_count=processes_count,
-        distributor="multiprocessing",
+        distributor="pyspark",
         save_figures=True,
         number_sample_per_shard=1000,
         timeout=1,

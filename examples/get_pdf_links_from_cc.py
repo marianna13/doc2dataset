@@ -11,11 +11,9 @@ import os
 from typing import Dict
 
 
-
 import re
 import io
 import time
-
 
 
 def make_link_absolute(url: str, base_url: str) -> str:
@@ -39,7 +37,6 @@ def make_links_absolute(links: list, base_url: str) -> list:
     return abs_links
 
 
-
 def local_session(num_cores=4, mem_gb=16):
     """Build a local spark session"""
     spark = (
@@ -50,6 +47,7 @@ def local_session(num_cores=4, mem_gb=16):
     )
     return spark
 
+
 def read_wat_index_file(wat_index: str):
     with fsspec.open(wat_index, "r", compression="gzip") as f:
         index_lines = f.readlines()
@@ -57,13 +55,14 @@ def read_wat_index_file(wat_index: str):
     wats = [a.strip() for a in index_lines]
     return wats
 
+
 def process_wat(path: str):
     """
     Process a single wat file
     path here is the path of an index file to select random wat from
     """
 
-    wat = 's3://commoncrawl/'+random.choice(read_wat_index_file(path)) # random wat from index
+    wat = "s3://commoncrawl/" + random.choice(read_wat_index_file(path))  # random wat from index
 
     while True:
         try:
@@ -102,21 +101,16 @@ def process_wat(path: str):
             except ValueError:
                 pass
 
-           
         filtered_links = make_links_absolute(links, base_url)
         for link in filtered_links:
-            link = link['url']
-            
+            link = link["url"]
+
             if link.startswith("http://") or link.startswith("https://"):
-                if link.endswith('.pdf'):
-                    yield (link,) 
-           
-            
+                if link.endswith(".pdf"):
+                    yield (link,)
 
 
-
-if __name__ == '__main__':
-
+if __name__ == "__main__":
     spark = local_session()
 
     wat_count = 10
@@ -125,13 +119,12 @@ if __name__ == '__main__':
 
     sc = SparkContext.getOrCreate()
     wats = ["s3://" + e for e in fs.glob(p + "/*/wat.paths.gz")]
-    wats = random.sample(wats, wat_count) # randomly select wat_count wat links
+    wats = random.sample(wats, wat_count)  # randomly select wat_count wat links
     rdd = sc.parallelize(wats, wat_count)
- 
-    link_df = rdd.mapPartitions(lambda x: process_wat(list(x)[0])).toDF(['url'])
-    link_df = link_df.dropDuplicates(['url'])
+
+    link_df = rdd.mapPartitions(lambda x: process_wat(list(x)[0])).toDF(["url"])
+    link_df = link_df.dropDuplicates(["url"])
 
     link_df.show()
     print(link_df.count())
-    link_df.write.parquet(f'PDF_links')
- 
+    link_df.write.parquet(f"PDF_links")
