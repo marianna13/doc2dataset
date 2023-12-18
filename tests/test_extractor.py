@@ -1,5 +1,5 @@
 import pytest
-from PDF_extraction.extractor import *
+from doc2dataset.extractor import *
 
 
 def test_count_words_in_page():
