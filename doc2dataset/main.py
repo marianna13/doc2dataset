@@ -228,7 +228,7 @@ def download(
     else:
         raise ValueError(f"Distributor {distributor} not supported")
 
-    distributor_fn(processes_count, downloader, reader, subjob_size, max_shard_retry, spark_mem_gb)
+    distributor_fn(processes_count, downloader, reader, subjob_size, max_shard_retry)
     logger_process.join()
 
     if not hasattr(fs, "s3"):
