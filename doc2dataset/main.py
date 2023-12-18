@@ -98,7 +98,6 @@ def download(
     user_agent_token: Optional[str] = None,
     disallowed_header_directives: Optional[List[str]] = None,
     encode_format: str = "txt",
-    spark_mem_gb: int = 16,
     get_drawings: bool = False,
     max_pages: Optional[int] = None,
 ):
