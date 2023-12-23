@@ -11,3 +11,4 @@ aiohttp
 pycld2
 resiliparse
 wandb
+webdataset
