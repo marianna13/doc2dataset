@@ -384,7 +384,7 @@ class Downloader:
                     try:
                         doc = fitz.open(stream=doc_stream)
                         status, error_message, failed_to_extract = self.process_doc(doc, sample_writer)
-                    except Exception as err: # pylint: disable=broad-except
+                    except Exception as err:  # pylint: disable=broad-except
                         error_message = str(err)
 
                     if error_message is not None:

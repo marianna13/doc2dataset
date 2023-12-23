@@ -164,7 +164,7 @@ class Extractor:
             if self.get_drawings:
                 drawings = get_svg(page)
 
-        except Exception as err: # pylint: disable=broad-except
+        except Exception as err:  # pylint: disable=broad-except
             error_message = str(err)
             processed_page, count_words = None, None
 
