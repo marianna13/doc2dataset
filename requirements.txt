@@ -10,3 +10,4 @@ requests
 aiohttp
 pycld2
 resiliparse
+wandb
