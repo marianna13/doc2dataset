@@ -1,5 +1,6 @@
 import pytest
 from doc2dataset.extractor import *
+from resiliparse.parse.html import HTMLTree
 
 
 def test_count_words_in_page():
@@ -33,34 +34,33 @@ def test_remove_all_tags():
 
 def test_remove_all_tags_except_img():
     page = "نکیمن دیلوت هوضو هب ار"
-    assert remove_all_tags_except_img(page) == page
+    result, _ = remove_all_tags_except_img(HTMLTree.parse(page))
+    assert result == page
 
-    page = "<h1> header \n header </h2>نکیمن دیلوت  <img jslfndl \n\n\n />هوضو هب ار бла бла"
-    assert (
-        remove_all_tags_except_img(page)
-        == "\n header \n header \nنکیمن دیلوت  <img jslfndl \n\n\n />هوضو هب ار бла бла"
-    )
+    page = "<h2> header \n header </h2>نکیمن دیلوت  <img src=\"jslfndl\" \n\n\n />هوضو هب ار бла бла"
+    result, _ = remove_all_tags_except_img(HTMLTree.parse(page))
+    assert result == "header header\n\nنکیمن دیلوت <img src=\"jslfndl\"/>هوضو هب ار бла бла"
 
 
 def test_remove_img_tag():
-    page = "<h1> header \n header </h2>نکیمن دیلوت  <img jslfndl \n\n\n />هوضو هب ار бла бла"
+    page = "<h2> header \n header </h2>نکیمن دیلوت  <img jslfndl \n\n\n />هوضو هب ار бла бла"
     img = "<img jslfndl \n\n\n />"
-    assert remove_img_tag(page=page, img=img) == "<h1> header \n header </h2>نکیمن دیلوت  هوضو هب ار бла бла"
+    assert remove_img_tag(page=page, img=img) == "<h2> header \n header </h2>نکیمن دیلوت  هوضو هب ار бла бла"
 
 
 def test_remove_digits():
-    page = "<h1> 7494 header \n header </h2>نکیمن دیلوت  <img jslfndl \n\n\n />هوضو هب ار бла бла 34-89 34.67"
+    page = "<h2> 7494 header \n header </h2>نکیمن دیلوت  <img jslfndl \n\n\n />هوضو هب ار бла бла 34-89 34.67"
     assert (
-        remove_digits(page=page) == "<h>  header \n header </h>نکیمن دیلوت  <img jslfndl \n\n\n />هوضو هب ار бла бла - "
+        rm_digits(page=page) == "<h>  header \n header </h>نکیمن دیلوت  <img jslfndl \n\n\n />هوضو هب ار бла бла - "
     )
 
 
 def test_detect_language():
     page = """خداحافظ"""
-    assert detect_language(page, encoding=None) == "fa"
+    assert detect_language(page) == "fa"
 
     page = "а неправильный формат идентификатора дн назад"
-    assert detect_language(page, encoding=None) == "ru"
+    assert detect_language(page) == "ru"
 
     page = "OK I fixed the Python bindings to always return 3 languages even"
-    assert detect_language(page, encoding=None) == "en"
+    assert detect_language(page) == "en"

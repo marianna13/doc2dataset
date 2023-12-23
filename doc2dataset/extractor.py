@@ -51,9 +51,13 @@ def remove_all_tags(page: str) -> str:
 def remove_all_tags_except_img(tree: HTMLTree) -> tuple:
     imgs = tree.body.get_elements_by_tag_name("img")
     for img in imgs:
-        img_tag = f'<img height="{img.getattr("height")}" width="{img.getattr("width")}" src="{img.getattr("src")}"/>'
+        w, h = img.getattr("height"), img.getattr("width")
+        if not (w is None or h is None):
+            img_tag = f'<img height={img.getattr("height")} width={img.getattr("width")} src="{img.getattr("src")}"/>'
+        else:
+            img_tag = f'<img src="{img.getattr("src")}"/>'
         img.setattr("alt", img_tag)
-    return extract_plain_text(tree, preserve_formatting=True, alt_texts=True), imgs
+    return extract_plain_text(tree, preserve_formatting=True), imgs
 
 
 def remove_img_tag(page, img):
