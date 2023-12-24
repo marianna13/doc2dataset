@@ -139,7 +139,7 @@ class Downloader:
             print(f"shard {row[0]} failed with error {err}")
             return (False, row)
 
-    def process_doc(self, doc, sample_writer):
+    def process_doc(self, doc, sample_writer, status_dict, failed_to_extract, meta, str_key):
         """Process a doc stream"""
         total_words = 0
         error_message = None
@@ -383,7 +383,9 @@ class Downloader:
                     doc_stream.seek(0)
                     try:
                         doc = fitz.open(stream=doc_stream)
-                        status, error_message, failed_to_extract = self.process_doc(doc, sample_writer)
+                        status, error_message, failed_to_extract = self.process_doc(
+                            doc, sample_writer, status_dict, failed_to_extract, meta, str_key
+                        )
                     except Exception as err:  # pylint: disable=broad-except
                         error_message = str(err)
 

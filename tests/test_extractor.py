@@ -37,9 +37,9 @@ def test_remove_all_tags_except_img():
     result, _ = remove_all_tags_except_img(HTMLTree.parse(page))
     assert result == page
 
-    page = "<h2> header \n header </h2>نکیمن دیلوت  <img src=\"jslfndl\" \n\n\n />هوضو هب ار бла бла"
+    page = '<h2> header \n header </h2>نکیمن دیلوت  <img src="jslfndl" \n\n\n />هوضو هب ار бла бла'
     result, _ = remove_all_tags_except_img(HTMLTree.parse(page))
-    assert result == "header header\n\nنکیمن دیلوت <img src=\"jslfndl\"/>هوضو هب ار бла бла"
+    assert result == 'header header\n\nنکیمن دیلوت <img src="jslfndl"/>هوضو هب ار бла бла'
 
 
 def test_remove_img_tag():
@@ -50,9 +50,7 @@ def test_remove_img_tag():
 
 def test_remove_digits():
     page = "<h2> 7494 header \n header </h2>نکیمن دیلوت  <img jslfndl \n\n\n />هوضو هب ار бла бла 34-89 34.67"
-    assert (
-        rm_digits(page=page) == "<h>  header \n header </h>نکیمن دیلوت  <img jslfndl \n\n\n />هوضو هب ار бла бла - "
-    )
+    assert rm_digits(page=page) == "<h>  header \n header </h>نکیمن دیلوت  <img jslfndl \n\n\n />هوضو هب ار бла бла - "
 
 
 def test_detect_language():
