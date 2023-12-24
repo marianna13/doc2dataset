@@ -8,3 +8,7 @@ fsspec
 loguru
 requests
 aiohttp
+pycld2
+resiliparse
+wandb
+webdataset
