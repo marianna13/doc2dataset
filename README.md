@@ -44,7 +44,11 @@ This module exposes a single function `pdf_extractor` which takes the same argum
 * **max_pages** maximum number of pages per document (decreasing this param can help speed up) (default = None)
 * **get_drawings** whether to extract  SVG images (default = False)
 
-  
+## Output examples
+
+[sample_output.md](sample_output.md)
+
+
 ## For development
 
 
