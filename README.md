@@ -5,7 +5,7 @@ Easily extract text (and images) from a bunch of pdf files (while preserving the
 
 ## Install
 
-pip install git+https://github.com/marianna13/PDF_extraction.git
+`pip install git+https://github.com/marianna13/PDF_extraction.git`
 
 ## Python examples
 
