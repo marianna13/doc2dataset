@@ -131,6 +131,7 @@ class Extractor:
         language = None
         images_per_page = None
         drawings = None
+        count_words = None
         try:
             processed_page = page.get_text("xhtml")
             processed_page = processed_page.replace(' id="page0"', "").encode()
