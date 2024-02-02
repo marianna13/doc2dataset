@@ -98,7 +98,7 @@ def download(
     max_shard_retry: int = 1,
     user_agent_token: Optional[str] = None,
     disallowed_header_directives: Optional[List[str]] = None,
-    encode_format: str = "txt",
+    encode_format: str = "text",
     get_drawings: bool = False,
     max_pages: Optional[int] = None,
 ):
