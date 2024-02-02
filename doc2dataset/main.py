@@ -14,6 +14,7 @@ from .writer import (
     ParquetSampleWriter,
     TFRecordSampleWriter,
     DummySampleWriter,
+    JsonSampleWriter
 )
 from .reader import Reader
 from .downloader import Downloader
@@ -178,6 +179,8 @@ def download(
         sample_writer_class = TFRecordSampleWriter  # type: ignore
     elif output_format == "dummy":
         sample_writer_class = DummySampleWriter  # type: ignore
+    elif output_format == "jsonl":
+        sample_writer_class = JsonSampleWriter  # type: ignore
     else:
         raise ValueError(f"Invalid output format {output_format}")
 
