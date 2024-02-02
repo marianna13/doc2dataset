@@ -141,7 +141,7 @@ class Extractor:
             if self.save_figures:
                 processed_page, images = remove_all_tags_except_img(tree)
             else:
-                processed_page = remove_all_tags(str(tree))
+                processed_page = extract_plain_text(tree)
 
             if self.count_words:
                 count_words = count_words_in_page(processed_page)

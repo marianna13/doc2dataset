@@ -185,11 +185,11 @@ class Downloader:
 
                 if self.save_figures:
                     meta["images_per_page"] = None
-                sample_writer.write(
-                    None,
-                    str_key + str(page_no),
-                    meta,
-                )
+                # sample_writer.write(
+                #     None,
+                #     str_key + str(page_no),
+                #     meta,
+                # )
                 continue
             if len(re.sub(r"\s|\n|\t", "", doc)) == 0:  # skip empty pages
                 continue
@@ -341,11 +341,11 @@ class Downloader:
                         if self.save_figures:
                             meta["images_per_page"] = None
 
-                        sample_writer.write(
-                            None,
-                            str_key,
-                            meta,
-                        )
+                        # sample_writer.write(
+                        #     None,
+                        #     str_key,
+                        #     meta,
+                        # )
                         semaphore.release()
                         continue
 
@@ -370,11 +370,11 @@ class Downloader:
                             if self.save_figures:
                                 meta["images_per_page"] = None
 
-                            sample_writer.write(
-                                None,
-                                str_key,
-                                meta,
-                            )
+                            # sample_writer.write(
+                            #     None,
+                            #     str_key,
+                            #     meta,
+                            # )
                             doc_stream.close()
                             del doc_stream
                             semaphore.release()
@@ -407,11 +407,11 @@ class Downloader:
                         if self.save_figures:
                             meta["images_per_page"] = None
 
-                        sample_writer.write(
-                            None,
-                            str_key,
-                            meta,
-                        )
+                        # sample_writer.write(
+                        #     None,
+                        #     str_key,
+                        #     meta,
+                        # )
                         doc_stream.close()
                         del doc_stream
                         semaphore.release()
