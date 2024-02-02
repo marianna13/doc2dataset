@@ -14,7 +14,7 @@ from .writer import (
     ParquetSampleWriter,
     TFRecordSampleWriter,
     DummySampleWriter,
-    JsonSampleWriter
+    JsonSampleWriter,
 )
 from .reader import Reader
 from .downloader import Downloader

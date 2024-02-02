@@ -8,7 +8,6 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 import webdataset as wds
-import json
 
 
 class BufferedParquetWriter:
@@ -152,13 +151,12 @@ class JsonSampleWriter:
         self.output_fd = fs.open(output_path, "wb", compression="gzip")
 
     def write(self, doc_str, key, meta):
-
         if doc_str is not None:
             sample = {"key": key, self.encode_format: doc_str}
         else:
             sample = {"key": key, self.encode_format: None}
         sample.update(meta)
-        sample = json.dumps(sample)+"\n"
+        sample = json.dumps(sample) + "\n"
         self.output_fd.write(sample.encode())
 
     def close(self):

@@ -119,26 +119,3 @@ def _spark_session(processes_count: int):
     finally:
         if owned:
             spark.stop()
-
-
-try:
-    import ray  # pylint: disable=import-outside-toplevel
-
-    @ray.remote
-    def ray_download(downloader, shards):
-        status, row = downloader(shards)
-        return status, row
-
-    def ray_distributor(processes_count, downloader, reader, _, max_shard_retry):  # type: ignore
-        # pylint: disable=unused-argument
-        ret = []
-        count = 0
-        for task in reader:
-            count += 1
-            ret.append(ray_download.remote(downloader, task))
-        ray.get(ret)
-
-except ModuleNotFoundError as e:
-
-    def ray_distributor(processes_count, downloader, reader, subjob_size, max_shard_retry):  # type: ignore  # pylint: disable=unused-argument
-        return None
