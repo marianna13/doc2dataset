@@ -8,6 +8,7 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 import webdataset as wds
+import json
 
 
 class BufferedParquetWriter:
@@ -124,6 +125,44 @@ class WebDatasetSampleWriter:
         self.buffered_parquet_writer.close()
         self.tarwriter.close()
         self.tar_fd.close()
+
+
+class JsonSampleWriter:
+    """Write text-only data to jsonl.gz"""
+
+    def __init__(
+        self,
+        shard_id,
+        output_folder,
+        oom_shard_count,
+        schema,
+        encode_format,
+    ):
+        self.shard_id = shard_id
+        self.schema = schema
+        self.encode_format = encode_format
+
+        shard_name = "{shard_id:0{oom_shard_count}d}".format(  # pylint: disable=consider-using-f-string
+            shard_id=shard_id, oom_shard_count=oom_shard_count
+        )
+
+        output_file = f"{output_folder}/{shard_name}.jsonl.gz"
+
+        fs, output_path = fsspec.core.url_to_fs(output_file)
+        self.output_fd = fs.open(output_path, "wb", compression="gzip")
+
+    def write(self, doc_str, key, meta):
+
+        if doc_str is not None:
+            sample = {"key": key, self.encode_format: doc_str}
+        else:
+            sample = {"key": key, self.encode_format: None}
+        sample.update(meta)
+        sample = json.dumps(sample)+"\n"
+        self.output_fd.write(sample.encode())
+
+    def close(self):
+        self.output_fd.close()
 
 
 class TFRecordSampleWriter:
